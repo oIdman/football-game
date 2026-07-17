@@ -1,13 +1,18 @@
 extends Area2D
-## Ball that appears at screen center and flies toward the goal (downward).
-## Grows larger as it approaches. Leaves a COMET/METEOR trail.
-## Trail tail points opposite to flight direction.
+## Ball with 3 shot types: straight / curve (bezier) / knuckle (wobble+dip).
+## Appears at screen center, flies toward goal, leaves comet trail.
+
+enum ShotType { STRAIGHT, CURVE, KNUCKLE }
 
 var _target: Vector2
+var _start_pos: Vector2
+var _control: Vector2            # bezier control point for curve shot
 var _speed: float = 200.0
 var _active: bool = false
 var _progress: float = 0.0
 var _travel_distance: float
+var _shot_type: int = ShotType.STRAIGHT
+var _knuckle_seed: float = 0.0   # random seed for knuckleball wobble
 var _trail_world: Array[Vector2] = []
 
 @onready var sprite: Sprite2D = $Sprite2D
@@ -22,6 +27,9 @@ func _ready() -> void:
 	_generate_texture()
 	_setup_comet_trail()
 
+# ---------------------------------------------------------------------------
+# Texture generation
+# ---------------------------------------------------------------------------
 func _generate_texture() -> void:
 	var r = 16
 	var img = Image.create(r * 2, r * 2, false, Image.FORMAT_RGBA8)
@@ -32,7 +40,6 @@ func _generate_texture() -> void:
 			var dy = y - r + 0.5
 			if sqrt(dx * dx + dy * dy) <= r - 0.5:
 				img.set_pixel(x, y, Color.WHITE)
-	# Pentagon pattern
 	var cx = r
 	var cy = r
 	var ir = r * 0.45
@@ -50,72 +57,136 @@ func _generate_texture() -> void:
 	sprite.texture = ImageTexture.create_from_image(img)
 	sprite.centered = true
 
+# ---------------------------------------------------------------------------
+# Comet trail setup
+# ---------------------------------------------------------------------------
 func _setup_comet_trail() -> void:
-	# --- Width curve: fat near ball, tapered at tail ---
 	var wc = Curve.new()
-	wc.add_point(Vector2(0.0, 0.0))   # tail tip:   0px wide
-	wc.add_point(Vector2(0.3, 0.25))  # lower third: narrow
-	wc.add_point(Vector2(0.7, 0.7))   # mid:     thickening
-	wc.add_point(Vector2(1.0, 1.0))   # ball end:   full width
+	wc.add_point(Vector2(0.0, 0.0))
+	wc.add_point(Vector2(0.3, 0.25))
+	wc.add_point(Vector2(0.7, 0.7))
+	wc.add_point(Vector2(1.0, 1.0))
 	trail.width_curve = wc
 	trail.width = 14.0
 
-	# --- Gradient: bright near ball, fading out ---
 	var g = Gradient.new()
-	g.set_color(0.0, Color(1.0, 0.4, 0.15, 0.0))    # tail tip:  red, transparent
-	g.set_color(0.3, Color(1.0, 0.6, 0.2, 0.25))    # lower:     orange glow
-	g.set_color(0.6, Color(1.0, 0.85, 0.5, 0.55))   # mid:       gold
-	g.set_color(0.85, Color(1.0, 0.95, 0.8, 0.85))  # near ball: warm white
-	g.set_color(1.0, Color(1.0, 1.0, 1.0, 1.0))     # ball end:  pure white
+	g.set_color(0.0, Color(1.0, 0.4, 0.15, 0.0))
+	g.set_color(0.3, Color(1.0, 0.6, 0.2, 0.25))
+	g.set_color(0.6, Color(1.0, 0.85, 0.5, 0.55))
+	g.set_color(0.85, Color(1.0, 0.95, 0.8, 0.85))
+	g.set_color(1.0, Color(1.0, 1.0, 1.0, 1.0))
 	trail.gradient = g
-
-	# Rounded caps for smooth look
 	trail.begin_cap_mode = Line2D.LINE_CAP_ROUND
 	trail.end_cap_mode = Line2D.LINE_CAP_ROUND
 
-func launch(start_pos: Vector2, target_pos: Vector2, speed: float) -> void:
-	global_position = start_pos
+# ---------------------------------------------------------------------------
+# Launch — random shot type if none specified
+# ---------------------------------------------------------------------------
+func launch(start_pos: Vector2, target_pos: Vector2, speed: float, shot_type: int = -1) -> void:
+	_start_pos = start_pos
 	_target = target_pos
 	_speed = speed
-	scale = Vector2(0.15, 0.15)     # tiny at distance
-	_progress = 0.0
 	_travel_distance = start_pos.distance_to(target_pos)
-	_active = true
+	_progress = 0.0
 	_trail_world.clear()
+
+	# Random shot type selection
+	if shot_type < 0:
+		var roll = randf()
+		if roll < 0.40:
+			_shot_type = ShotType.STRAIGHT
+		elif roll < 0.70:
+			_shot_type = ShotType.CURVE
+		else:
+			_shot_type = ShotType.KNUCKLE
+	else:
+		_shot_type = shot_type
+
+	# Per-type initialisation
+	match _shot_type:
+		ShotType.CURVE:
+			_setup_curve()
+		ShotType.KNUCKLE:
+			_knuckle_seed = randf() * 100.0
+
+	global_position = start_pos
+	scale = Vector2(0.15, 0.15)
+	_active = true
 	show()
 	set_process(true)
 	collision_shape.disabled = false
 	trail.clear_points()
 
+func _setup_curve() -> void:
+	"""Quadratic bezier control point offset perpendicular to direction."""
+	var dir = (_target - _start_pos).normalized()
+	var perp = Vector2(-dir.y, dir.x)
+	var dist = _start_pos.distance_to(_target)
+	var strength = dist * randf_range(0.30, 0.65)
+	var side = 1 if randi() % 2 == 0 else -1
+	var mid = (_start_pos + _target) * 0.5
+	_control = mid + perp * strength * side
+
+# ---------------------------------------------------------------------------
+# Position on path
+# ---------------------------------------------------------------------------
+func _compute_position(progress: float) -> Vector2:
+	match _shot_type:
+		ShotType.STRAIGHT:
+			return _start_pos.lerp(_target, progress)
+
+		ShotType.CURVE:    # Quadratic Bézier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
+			var t = progress
+			var omt = 1.0 - t
+			return omt * omt * _start_pos \
+				 + 2.0 * omt * t * _control \
+				 + t * t * _target
+
+		ShotType.KNUCKLE:
+			var base = _start_pos.lerp(_target, progress)
+			var wob_x = sin(progress * 16.0 + _knuckle_seed) * 5.0
+			var wob_y = sin(progress * 13.0 + _knuckle_seed * 1.37) * 4.0
+			var dip = 0.0
+			if progress > 0.65:
+				var f = (progress - 0.65) / 0.35
+				dip = f * f * 40.0
+			return base + Vector2(wob_x, wob_y + dip)
+
+	return _start_pos.lerp(_target, progress)
+
+# ---------------------------------------------------------------------------
+# Per-frame update
+# ---------------------------------------------------------------------------
 func _process(delta: float) -> void:
 	if not _active:
 		return
-	var direction = (_target - global_position).normalized()
-	var step = _speed * delta
-	var remaining = global_position.distance_to(_target)
 
-	if remaining > step:
-		global_position += direction * step
-		_progress = 1.0 - (remaining / _travel_distance)
+	_progress += (_speed * delta) / _travel_distance
 
-		# Ball grows from 0.15x → 1.0x as it approaches
-		var s = lerp(0.15, 1.0, _progress * _progress)  # quadratic ease-in
-		scale = Vector2.ONE * s
-
-		# Record trail positions (world coords, sample every 6px)
-		if _trail_world.is_empty() or \
-			_trail_world[-1].distance_squared_to(global_position) > 36.0:
-			_trail_world.append(global_position)
-			if _trail_world.size() > 20:
-				_trail_world.remove_at(0)
-
-		# Rebuild Line2D from world → local coords
-		trail.clear_points()
-		for wp in _trail_world:
-			trail.add_point(to_local(wp))
-	else:
+	if _progress >= 1.0:
 		_miss()
+		return
 
+	global_position = _compute_position(_progress)
+
+	# Ball grows from 0.15x to 1.0x with quadratic ease-in
+	var s = lerp(0.15, 1.0, _progress * _progress)
+	scale = Vector2.ONE * s
+
+	# Trail recording (world coords, ~6px sample interval)
+	if _trail_world.is_empty() or \
+		_trail_world[-1].distance_squared_to(global_position) > 36.0:
+		_trail_world.append(global_position)
+		if _trail_world.size() > 20:
+			_trail_world.remove_at(0)
+
+	trail.clear_points()
+	for wp in _trail_world:
+		trail.add_point(to_local(wp))
+
+# ---------------------------------------------------------------------------
+# End conditions
+# ---------------------------------------------------------------------------
 func _miss() -> void:
 	_active = false
 	set_process(false)
