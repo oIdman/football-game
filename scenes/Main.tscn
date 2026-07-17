@@ -1,0 +1,15 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="PackedScene" path="res://scenes/Ball.tscn" id="2_ball"]
+[ext_resource type="PackedScene" path="res://scenes/Goalkeeper.tscn" id="3_gk"]
+[ext_resource type="PackedScene" path="res://ui/Getgoal.tscn" id="4_ui"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Goalkeeper" parent="." instance=ExtResource("3_gk")]
+
+[node name="Ball" parent="." instance=ExtResource("2_ball")]
+
+[node name="UI" parent="." instance=ExtResource("4_ui")]

@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/goalkeeper.gd" id="1_gk"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_gk"]
+size = Vector2(38, 52)
+
+[node name="Goalkeeper" type="Area2D"]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1_gk")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_gk")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]

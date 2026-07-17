@@ -1,0 +1,18 @@
+# Godot 4+ specific ignores
+.godot/
+android/
+ios/
+*.o
+*.a
+*.lib
+*.dylib
+*.dll
+*.exp
+*.obj
+
+# Imported assets (can be regenerated)
+.import/
+
+# Export
+export/
+build/
