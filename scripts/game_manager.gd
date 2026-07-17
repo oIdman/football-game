@@ -26,38 +26,43 @@ func _spawn_ball() -> void:
 	if not main or not main.has_node("Ball"):
 		return
 	var ball = main.get_node("Ball")
-	var viewport_size = main.get_viewport().get_visible_rect().size
+	var vs = main.get_viewport().get_visible_rect().size
 
-	var center_x = viewport_size.x * 0.5
-	var start_pos = Vector2(center_x, viewport_size.y * 0.92)
-	var goal_l = viewport_size.x * 0.16
-	var goal_r = viewport_size.x * 0.84
-	var goal_top = viewport_size.y * 0.08
-	var goal_bot = viewport_size.y * 0.72
-	var mid_x = viewport_size.x * 0.5
+	var center_x = vs.x * 0.5
 
-	# Pick left or right side, randomize target within that third
+	# Ball spawns at SCREEN CENTER (small, far away, field side)
+	var start_pos = Vector2(center_x, vs.y * 0.5)
+
+	# Goal bounds (must match main.gd layout: lower portion of screen)
+	var goal_l = vs.x * 0.12
+	var goal_r = vs.x * 0.88
+	var goal_top = vs.y * 0.58
+	var goal_bot = vs.y * 0.92
+	var mid_x = vs.x * 0.5
+
+	# Pick left or right side, randomize target within that half of the goal
 	var side = "left" if randi() % 2 == 0 else "right"
 	var target_x: float
 	if side == "left":
-		target_x = randf_range(goal_l + 12, mid_x - 20)
+		target_x = randf_range(goal_l + 20, mid_x - 20)
 	else:
-		target_x = randf_range(mid_x + 20, goal_r - 12)
-	var target_y = randf_range(goal_top + 20, goal_bot - 20)
+		target_x = randf_range(mid_x + 20, goal_r - 20)
+	var target_y = randf_range(goal_top + 30, goal_bot - 30)
 	var target_pos = Vector2(target_x, target_y)
 
-	# Difficulty scales with score
-	var base_speed = 280.0 + min(score * 15, 280.0)
-	var reaction_window = 1.4 - min(score * 0.05, 0.6)
+	# Ball travel: speed adjusts so travel time decreases with score
+	var dist = start_pos.distance_to(target_pos)
+	var travel_time = max(1.0 - score * 0.04, 0.5)   # 1.0s → 0.5s
+	var speed = dist / travel_time
+	speed = clamp(speed, 120.0, 550.0)
 
-	ball.launch(start_pos, target_pos, base_speed, reaction_window)
+	ball.launch(start_pos, target_pos, speed)
 
 func on_ball_saved() -> void:
 	score += 1
 	consecutive_saves += 1
 	score_updated.emit(score)
 
-	# Brief pause then next ball
 	await get_tree().create_timer(0.4).timeout
 	if state == GameState.PLAYING:
 		_spawn_ball()

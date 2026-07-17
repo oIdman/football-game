@@ -17,7 +17,7 @@ disabled = true
 [node name="Sprite2D" type="Sprite2D" parent="."]
 
 [node name="Trail" type="Line2D" parent="."]
-width = 4.0
-default_color = Color(0.2, 0.6, 1.0, 0.7)
-begin_cap_mode = 0
-end_cap_mode = 0
+width = 14.0
+default_color = Color(1.0, 1.0, 1.0, 1.0)
+begin_cap_mode = 1
+end_cap_mode = 1

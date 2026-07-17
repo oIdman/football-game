@@ -1,14 +1,14 @@
 extends Area2D
-## Ball that flies from the bottom center toward the goal.
-## Grows in size, leaves a trail, and triggers save/miss events.
+## Ball that appears at screen center and flies toward the goal (downward).
+## Grows larger as it approaches. Leaves a COMET/METEOR trail.
+## Trail tail points opposite to flight direction.
 
 var _target: Vector2
-var _speed: float = 300.0
-var _reaction_window: float = 1.0
+var _speed: float = 200.0
 var _active: bool = false
 var _progress: float = 0.0
-var _start_pos: Vector2
 var _travel_distance: float
+var _trail_world: Array[Vector2] = []
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var trail: Line2D = $Trail
@@ -19,87 +19,101 @@ func _ready() -> void:
 	set_process(false)
 	collision_shape.disabled = true
 	area_entered.connect(_on_area_entered)
-	# Generate ball texture at runtime
 	_generate_texture()
+	_setup_comet_trail()
 
 func _generate_texture() -> void:
-	var radius = 16
-	var size = radius * 2
-	var img = Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var r = 16
+	var img = Image.create(r * 2, r * 2, false, Image.FORMAT_RGBA8)
 	img.fill(Color.TRANSPARENT)
-	# Draw white circle
-	for x in size:
-		for y in size:
-			var dx = x - radius + 0.5
-			var dy = y - radius + 0.5
-			var d = sqrt(dx * dx + dy * dy)
-			if d <= radius:
+	for x in r * 2:
+		for y in r * 2:
+			var dx = x - r + 0.5
+			var dy = y - r + 0.5
+			if sqrt(dx * dx + dy * dy) <= r - 0.5:
 				img.set_pixel(x, y, Color.WHITE)
-			if d <= 4:
-				img.set_pixel(x, y, Color(0.4, 0.4, 0.4, 1))
-	# Draw pentagon pattern (simplified soccer ball)
-	var cx = radius
-	var cy = radius
-	var inner_r = radius * 0.45
+	# Pentagon pattern
+	var cx = r
+	var cy = r
+	var ir = r * 0.45
 	for i in 5:
-		var angle = i * PI * 2 / 5 - PI / 2
-		var px = cx + inner_r * cos(angle)
-		var py = cy + inner_r * sin(angle)
+		var a = i * PI * 2 / 5 - PI / 2
+		var px = cx + ir * cos(a)
+		var py = cy + ir * sin(a)
 		for dy2 in range(-2, 3):
 			for dx2 in range(-2, 3):
 				var sx = int(px) + dx2
 				var sy = int(py) + dy2
-				if sx >= 0 and sx < size and sy >= 0 and sy < size:
-					if sqrt(dx2*dx2 + dy2*dy2) <= 2.2:
-						var existing = img.get_pixel(sx, sy)
-						if existing.a > 0:
-							img.set_pixel(sx, sy, Color(0.15, 0.15, 0.15, 1))
-
+				if sx >= 0 and sx < r * 2 and sy >= 0 and sy < r * 2:
+					if sqrt(float(dx2 * dx2 + dy2 * dy2)) <= 2.2 and img.get_pixel(sx, sy).a > 0:
+						img.set_pixel(sx, sy, Color(0.15, 0.15, 0.15, 1))
 	sprite.texture = ImageTexture.create_from_image(img)
 	sprite.centered = true
 
-func launch(start_pos: Vector2, target_pos: Vector2, speed: float, reaction_window: float) -> void:
+func _setup_comet_trail() -> void:
+	# --- Width curve: fat near ball, tapered at tail ---
+	var wc = Curve.new()
+	wc.add_point(Vector2(0.0, 0.0))   # tail tip:   0px wide
+	wc.add_point(Vector2(0.3, 0.25))  # lower third: narrow
+	wc.add_point(Vector2(0.7, 0.7))   # mid:     thickening
+	wc.add_point(Vector2(1.0, 1.0))   # ball end:   full width
+	trail.width_curve = wc
+	trail.width = 14.0
+
+	# --- Gradient: bright near ball, fading out ---
+	var g = Gradient.new()
+	g.set_color(0.0, Color(1.0, 0.4, 0.15, 0.0))    # tail tip:  red, transparent
+	g.set_color(0.3, Color(1.0, 0.6, 0.2, 0.25))    # lower:     orange glow
+	g.set_color(0.6, Color(1.0, 0.85, 0.5, 0.55))   # mid:       gold
+	g.set_color(0.85, Color(1.0, 0.95, 0.8, 0.85))  # near ball: warm white
+	g.set_color(1.0, Color(1.0, 1.0, 1.0, 1.0))     # ball end:  pure white
+	trail.gradient = g
+
+	# Rounded caps for smooth look
+	trail.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	trail.end_cap_mode = Line2D.LINE_CAP_ROUND
+
+func launch(start_pos: Vector2, target_pos: Vector2, speed: float) -> void:
 	global_position = start_pos
-	_start_pos = start_pos
 	_target = target_pos
 	_speed = speed
-	_reaction_window = reaction_window
-	scale = Vector2(0.25, 0.25)
+	scale = Vector2(0.15, 0.15)     # tiny at distance
 	_progress = 0.0
 	_travel_distance = start_pos.distance_to(target_pos)
 	_active = true
+	_trail_world.clear()
 	show()
 	set_process(true)
 	collision_shape.disabled = false
-
-	# Trail setup
 	trail.clear_points()
-	trail.add_point(Vector2.ZERO)  # local coords
-	trail.width = 4
 
 func _process(delta: float) -> void:
 	if not _active:
 		return
-
 	var direction = (_target - global_position).normalized()
 	var step = _speed * delta
-	var dist_remaining = global_position.distance_to(_target)
+	var remaining = global_position.distance_to(_target)
 
-	if dist_remaining > step:
+	if remaining > step:
 		global_position += direction * step
-		_progress = 1.0 - (dist_remaining / _travel_distance)
-		# Scale from 0.25 to 1.0
-		var s = lerp(0.25, 1.0, _progress)
-		scale = Vector2(s, s)
-		# Trail — keep ~40 points, fade alpha
-		if trail.get_point_count() == 0 or global_position.distance_to(trail.get_points()[-1] + Vector2(0, 0)) > 6:
-			# Convert to local coords
-			var local_pos = to_local(global_position)
-			trail.add_point(local_pos)
-			while trail.get_point_count() > 40:
-				trail.remove_point(0)
+		_progress = 1.0 - (remaining / _travel_distance)
+
+		# Ball grows from 0.15x → 1.0x as it approaches
+		var s = lerp(0.15, 1.0, _progress * _progress)  # quadratic ease-in
+		scale = Vector2.ONE * s
+
+		# Record trail positions (world coords, sample every 6px)
+		if _trail_world.is_empty() or \
+			_trail_world[-1].distance_squared_to(global_position) > 36.0:
+			_trail_world.append(global_position)
+			if _trail_world.size() > 20:
+				_trail_world.remove_at(0)
+
+		# Rebuild Line2D from world → local coords
+		trail.clear_points()
+		for wp in _trail_world:
+			trail.add_point(to_local(wp))
 	else:
-		# Reached the goal area — missed!
 		_miss()
 
 func _miss() -> void:
@@ -107,6 +121,7 @@ func _miss() -> void:
 	set_process(false)
 	collision_shape.disabled = true
 	trail.clear_points()
+	_trail_world.clear()
 	hide()
 	if GameManager.state == GameManager.GameState.PLAYING:
 		GameManager.on_ball_missed()
@@ -119,6 +134,7 @@ func _on_area_entered(area: Area2D) -> void:
 		set_process(false)
 		collision_shape.disabled = true
 		trail.clear_points()
+		_trail_world.clear()
 		hide()
 		if GameManager.state == GameManager.GameState.PLAYING:
 			GameManager.on_ball_saved()
