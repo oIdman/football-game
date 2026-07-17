@@ -16,3 +16,6 @@ ios/
 # Export
 export/
 build/
+
+# OpenCode run continuation cache
+.omo/run-continuation/
